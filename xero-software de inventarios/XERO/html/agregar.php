@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 require_once __DIR__ . '/../php/actividad.php';
 
@@ -17,8 +19,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if ($descripcion !== '' && mb_strlen($descripcion) > 255) {
                 throw new Exception('La descripción de la categoría debe tener máximo 255 caracteres.');
             }
-            $consulta = $conexion->prepare('INSERT INTO categorias (nombre_categoria, descripcion) VALUES (?, ?)');
-            $consulta->bind_param('ss', $nombre, $descripcion);
+            $consulta = $conexion->prepare('INSERT INTO categorias (nombre_categoria, descripcion, id_usuario) VALUES (?, ?, ?)');
+            $consulta->bind_param('ssi', $nombre, $descripcion, $usuarioId);
             $consulta->execute();
             registrarActividad($conexion, 'Creó', 'Categoría', 'Creó la categoría "' . $nombre . '".');
             $mensaje = 'La categoría se guardó correctamente.';
@@ -43,8 +45,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if ($direccion !== '' && mb_strlen($direccion) > 150) {
                 throw new Exception('La dirección debe tener máximo 150 caracteres.');
             }
-            $consulta = $conexion->prepare('INSERT INTO proveedores (nombre_proveedor, descripcion, telefono, correo, direccion) VALUES (?, ?, ?, ?, ?)');
-            $consulta->bind_param('sssss', $nombre, $descripcion, $telefono, $correo, $direccion);
+            $consulta = $conexion->prepare('INSERT INTO proveedores (nombre_proveedor, descripcion, telefono, correo, direccion, id_usuario) VALUES (?, ?, ?, ?, ?, ?)');
+            $consulta->bind_param('sssssi', $nombre, $descripcion, $telefono, $correo, $direccion, $usuarioId);
             $consulta->execute();
             registrarActividad($conexion, 'Creó', 'Proveedor', 'Creó el proveedor "' . $nombre . '".');
             $mensaje = 'El proveedor se guardó correctamente.';
@@ -65,11 +67,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if ($direccion !== '' && mb_strlen($direccion) > 150) {
                 throw new Exception('La dirección debe tener máximo 150 caracteres.');
             }
-            $consulta = $conexion->prepare('INSERT INTO tiendas (nombre_tienda, descripcion, telefono, direccion) VALUES (?, ?, ?, ?)');
+            $consulta = $conexion->prepare('INSERT INTO tiendas (nombre_tienda, descripcion, telefono, direccion, id_usuario) VALUES (?, ?, ?, ?, ?)');
             if (!$consulta) {
                 throw new Exception('No se pudo preparar el registro de la tienda: ' . $conexion->error);
             }
-            $consulta->bind_param('ssss', $nombre, $descripcion, $telefono, $direccion);
+            $consulta->bind_param('ssssi', $nombre, $descripcion, $telefono, $direccion, $usuarioId);
             if (!$consulta->execute()) {
                 throw new Exception('No se pudo guardar la tienda: ' . $consulta->error);
             }
@@ -90,8 +92,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 if ($nombreCategoria === '') {
                     throw new Exception('Escribe el nombre de la nueva categoría.');
                 }
-                $consulta = $conexion->prepare('INSERT INTO categorias (nombre_categoria) VALUES (?)');
-                $consulta->bind_param('s', $nombreCategoria);
+                $consulta = $conexion->prepare('INSERT INTO categorias (nombre_categoria, id_usuario) VALUES (?, ?)');
+                $consulta->bind_param('si', $nombreCategoria, $usuarioId);
                 $consulta->execute();
                 $idCategoria = $conexion->insert_id;
             }
@@ -100,16 +102,22 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 if ($nombreProveedor === '') {
                     throw new Exception('Escribe el nombre del nuevo proveedor.');
                 }
-                $consulta = $conexion->prepare('INSERT INTO proveedores (nombre_proveedor) VALUES (?)');
-                $consulta->bind_param('s', $nombreProveedor);
+                $consulta = $conexion->prepare('INSERT INTO proveedores (nombre_proveedor, id_usuario) VALUES (?, ?)');
+                $consulta->bind_param('si', $nombreProveedor, $usuarioId);
                 $consulta->execute();
                 $idProveedor = $conexion->insert_id;
             }
             if ($idCategoria === 0 || $idProveedor === 0) {
                 throw new Exception('Selecciona una categoría y un proveedor.');
             }
-            $consulta = $conexion->prepare('INSERT INTO productos (nombre_producto, descripcion, precio, stock, id_categoria, id_proveedor) VALUES (?, ?, ?, ?, ?, ?)');
-            $consulta->bind_param('ssdiii', $nombre, $descripcion, $precio, $stock, $idCategoria, $idProveedor);
+            $relacionesPropias = $conexion->prepare('SELECT (SELECT COUNT(*) FROM categorias WHERE id_categoria = ? AND id_usuario = ?) + (SELECT COUNT(*) FROM proveedores WHERE id_proveedor = ? AND id_usuario = ?) AS total');
+            $relacionesPropias->bind_param('iiii', $idCategoria, $usuarioId, $idProveedor, $usuarioId);
+            $relacionesPropias->execute();
+            if ((int) $relacionesPropias->get_result()->fetch_assoc()['total'] !== 2) {
+                throw new Exception('Selecciona una categoría y un proveedor de tu cuenta.');
+            }
+            $consulta = $conexion->prepare('INSERT INTO productos (nombre_producto, descripcion, precio, stock, id_categoria, id_proveedor, id_usuario) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            $consulta->bind_param('ssdiiii', $nombre, $descripcion, $precio, $stock, $idCategoria, $idProveedor, $usuarioId);
             $consulta->execute();
             registrarActividad($conexion, 'Creó', 'Producto', 'Creó el producto "' . $nombre . '" con ' . $stock . ' unidades.');
             $mensaje = 'El producto se guardó correctamente.';
@@ -121,8 +129,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$categorias = $conexion->query('SELECT id_categoria, nombre_categoria FROM categorias ORDER BY nombre_categoria');
-$proveedores = $conexion->query('SELECT id_proveedor, nombre_proveedor FROM proveedores ORDER BY nombre_proveedor');
+$categorias = $conexion->prepare('SELECT id_categoria, nombre_categoria FROM categorias WHERE id_usuario = ? ORDER BY nombre_categoria');
+$categorias->bind_param('i', $usuarioId);
+$categorias->execute();
+$categorias = $categorias->get_result();
+$proveedores = $conexion->prepare('SELECT id_proveedor, nombre_proveedor FROM proveedores WHERE id_usuario = ? ORDER BY nombre_proveedor');
+$proveedores->bind_param('i', $usuarioId);
+$proveedores->execute();
+$proveedores = $proveedores->get_result();
 ?>
 <!DOCTYPE html>
 <html lang="es">

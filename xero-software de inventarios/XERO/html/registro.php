@@ -34,6 +34,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     } elseif (!is_string($contrasena) || strlen($contrasena) < 8 || strlen($contrasena) > 72) {
         $errores[] = 'La contraseña debe tener entre 8 y 72 caracteres.';
     } else {
+        $transaccionActiva = false;
         try {
             $buscarCorreo = $conexion->prepare('SELECT id_usuario FROM usuario WHERE correo = ? LIMIT 1');
             $buscarCorreo->bind_param('s', $correo);
@@ -44,6 +45,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             } else {
                 $contrasenaHash = password_hash($contrasena, PASSWORD_DEFAULT);
                 $rol = 'Usuario';
+                $conexion->begin_transaction();
+                $transaccionActiva = true;
                 $guardarUsuario = $conexion->prepare('INSERT INTO usuario (nombre, correo, telefono, contrasena, rol) VALUES (?, ?, ?, ?, ?)');
                 $guardarUsuario->bind_param('sssss', $nombreCompleto, $correo, $telefono, $contrasenaHash, $rol);
                 $guardarUsuario->execute();
@@ -54,8 +57,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                      VALUES (?, ?, ?, ?, ?)
                      ON DUPLICATE KEY UPDATE idioma = VALUES(idioma), moneda = VALUES(moneda), notificaciones_inventario = VALUES(notificaciones_inventario), alertas_correo = VALUES(alertas_correo)'
                 );
-                $guardarPreferencias->bind_param('issii', $idUsuario, $idioma = 'es', $moneda = 'usd', $notificaciones = 0, $alertas = 0);
+                $idioma = 'es';
+                $moneda = 'usd';
+                $notificaciones = 0;
+                $alertas = 0;
+                $guardarPreferencias->bind_param('issii', $idUsuario, $idioma, $moneda, $notificaciones, $alertas);
                 $guardarPreferencias->execute();
+                $conexion->commit();
+                $transaccionActiva = false;
 
                 $_SESSION = [];
                 session_regenerate_id(true);
@@ -69,6 +78,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 exit;
             }
         } catch (mysqli_sql_exception $excepcion) {
+            if ($transaccionActiva) {
+                $conexion->rollback();
+            }
             $errores[] = 'No se pudo crear la cuenta. Revisa tus datos e inténtalo de nuevo.';
         }
     }

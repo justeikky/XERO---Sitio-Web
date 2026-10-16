@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $mensaje = isset($_GET['actualizado']) ? 'El proveedor se actualizó correctamente.' : '';
@@ -8,16 +10,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     $idProveedor = (int) ($_POST['id_proveedor'] ?? 0);
 
     if ($idProveedor > 0) {
-        $consultaProductos = $conexion->prepare('SELECT COUNT(*) AS total FROM productos WHERE id_proveedor = ?');
-        $consultaProductos->bind_param('i', $idProveedor);
+        $consultaProductos = $conexion->prepare('SELECT COUNT(*) AS total FROM productos WHERE id_proveedor = ? AND id_usuario = ?');
+        $consultaProductos->bind_param('ii', $idProveedor, $usuarioId);
         $consultaProductos->execute();
         $totalProductos = (int) $consultaProductos->get_result()->fetch_assoc()['total'];
 
         if ($totalProductos > 0) {
             $error = 'No se puede eliminar este proveedor porque tiene productos relacionados.';
         } else {
-            $consulta = $conexion->prepare('DELETE FROM proveedores WHERE id_proveedor = ?');
-            $consulta->bind_param('i', $idProveedor);
+            $consulta = $conexion->prepare('DELETE FROM proveedores WHERE id_proveedor = ? AND id_usuario = ?');
+            $consulta->bind_param('ii', $idProveedor, $usuarioId);
             if ($consulta->execute() && $consulta->affected_rows > 0) {
                 $mensaje = 'El proveedor se eliminó correctamente.';
             } else {
@@ -29,14 +31,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     }
 }
 
-$proveedores = $conexion->query(
+$proveedores = $conexion->prepare(
     'SELECT pr.id_proveedor, pr.nombre_proveedor, pr.descripcion, pr.telefono, pr.correo, pr.direccion,
             COUNT(p.id_producto) AS total_productos
      FROM proveedores pr
-     LEFT JOIN productos p ON p.id_proveedor = pr.id_proveedor
+     LEFT JOIN productos p ON p.id_proveedor = pr.id_proveedor AND p.id_usuario = pr.id_usuario
+     WHERE pr.id_usuario = ?
      GROUP BY pr.id_proveedor, pr.nombre_proveedor, pr.descripcion, pr.telefono, pr.correo, pr.direccion
      ORDER BY pr.nombre_proveedor'
 );
+$proveedores->bind_param('i', $usuarioId);
+$proveedores->execute();
+$proveedores = $proveedores->get_result();
 ?>
 <!DOCTYPE html>
 <html lang="es">

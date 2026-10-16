@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $mensaje = '';
@@ -12,8 +14,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     $idProducto = (int) ($_POST['id_producto'] ?? 0);
 
     if ($idProducto > 0) {
-        $consulta = $conexion->prepare('DELETE FROM productos WHERE id_producto = ?');
-        $consulta->bind_param('i', $idProducto);
+        $consulta = $conexion->prepare('DELETE FROM productos WHERE id_producto = ? AND id_usuario = ?');
+        $consulta->bind_param('ii', $idProducto, $usuarioId);
         if ($consulta->execute() && $consulta->affected_rows > 0) {
             $mensaje = 'El producto se eliminó correctamente.';
         } elseif ($consulta->errno !== 0) {
@@ -26,14 +28,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     }
 }
 
-$productos = $conexion->query(
+$productos = $conexion->prepare(
     'SELECT p.id_producto, p.nombre_producto, p.descripcion, p.precio, p.stock,
             c.nombre_categoria, pr.nombre_proveedor
      FROM productos p
      INNER JOIN categorias c ON c.id_categoria = p.id_categoria
      INNER JOIN proveedores pr ON pr.id_proveedor = p.id_proveedor
+     WHERE p.id_usuario = ? AND c.id_usuario = ? AND pr.id_usuario = ?
      ORDER BY p.id_producto DESC'
 );
+$productos->bind_param('iii', $usuarioId, $usuarioId, $usuarioId);
+$productos->execute();
+$productos = $productos->get_result();
 ?>
 <!DOCTYPE html>
 <html lang="es">

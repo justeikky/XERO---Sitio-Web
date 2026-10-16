@@ -1,11 +1,14 @@
 <?php
-function registrarActividad(mysqli $conexion, string $accion, string $entidad, string $descripcion, int $idUsuario = 1): void
+function registrarActividad(mysqli $conexion, string $accion, string $entidad, string $descripcion, ?int $idUsuario = null): void
 {
-    $consulta = $conexion->prepare('INSERT INTO actividad (accion, entidad, descripcion, id_usuario) VALUES (?, ?, ?, ?)');
-    if ($consulta) {
-        $consulta->bind_param('sssi', $accion, $entidad, $descripcion, $idUsuario);
-        $consulta->execute();
+    $idUsuario = $idUsuario ?? (int) ($_SESSION['id_usuario'] ?? 0);
+    if ($idUsuario <= 0) {
+        throw new RuntimeException('No se puede registrar actividad sin un usuario autenticado.');
     }
+
+    $consulta = $conexion->prepare('INSERT INTO actividad (accion, entidad, descripcion, id_usuario) VALUES (?, ?, ?, ?)');
+    $consulta->bind_param('sssi', $accion, $entidad, $descripcion, $idUsuario);
+    $consulta->execute();
 }
 
 function tiempoTranscurrido(string $fecha): string

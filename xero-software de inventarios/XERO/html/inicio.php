@@ -2,13 +2,10 @@
 if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
 }
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
-$usuarioId = isset($_SESSION['id_usuario']) ? (int) $_SESSION['id_usuario'] : 0;
-if ($usuarioId <= 0) {
-    header('Location: sesion.php?sesion_expirada=1');
-    exit;
-}
 $moneda = 'cop';
 $monedaConsulta = $conexion->prepare('SELECT moneda FROM configuracion_usuario WHERE id_usuario = ? LIMIT 1');
 if ($monedaConsulta) {
@@ -26,42 +23,42 @@ $formatearMoneda = static function ($valor) use ($simboloMoneda): string {
 };
 
 $totalStockBajo = 0;
-$consultaStockBajo = $conexion->query('SELECT COUNT(*) AS total FROM productos WHERE stock <= 5');
-if ($consultaStockBajo) {
-    $totalStockBajo = (int) $consultaStockBajo->fetch_assoc()['total'];
-}
+$consultaStockBajo = $conexion->prepare('SELECT COUNT(*) AS total FROM productos WHERE id_usuario = ? AND stock <= 5');
+$consultaStockBajo->bind_param('i', $usuarioId);
+$consultaStockBajo->execute();
+$totalStockBajo = (int) $consultaStockBajo->get_result()->fetch_assoc()['total'];
 
 $totalCategorias = 0;
-$consultaCategorias = $conexion->query('SELECT COUNT(*) AS total FROM categorias');
-if ($consultaCategorias) {
-    $totalCategorias = (int) $consultaCategorias->fetch_assoc()['total'];
-}
+$consultaCategorias = $conexion->prepare('SELECT COUNT(*) AS total FROM categorias WHERE id_usuario = ?');
+$consultaCategorias->bind_param('i', $usuarioId);
+$consultaCategorias->execute();
+$totalCategorias = (int) $consultaCategorias->get_result()->fetch_assoc()['total'];
 
 $alertasInventario = [];
-$consultaAlertas = $conexion->query(
+$consultaAlertas = $conexion->prepare(
     'SELECT id_producto, nombre_producto, stock
      FROM productos
-     WHERE stock <= 5
+     WHERE id_usuario = ? AND stock <= 5
      ORDER BY stock ASC, nombre_producto ASC
      LIMIT 4'
 );
-if ($consultaAlertas) {
-    $alertasInventario = $consultaAlertas->fetch_all(MYSQLI_ASSOC);
-}
+$consultaAlertas->bind_param('i', $usuarioId);
+$consultaAlertas->execute();
+$alertasInventario = $consultaAlertas->get_result()->fetch_all(MYSQLI_ASSOC);
 
 $valores = ['entradas' => 0, 'salidas' => 0, 'inventario' => 0];
 $consultaValores = $conexion->prepare(
     'SELECT
         (SELECT COALESCE(SUM(e.cantidad * p.precio), 0)
          FROM inv_entrada e INNER JOIN productos p ON p.id_producto = e.id_producto
-         WHERE e.id_usuario = ?) AS entradas,
+         WHERE p.id_usuario = ?) AS entradas,
         (SELECT COALESCE(SUM(s.cantidad * p.precio), 0)
          FROM inv_salida s INNER JOIN productos p ON p.id_producto = s.id_producto
-         WHERE s.id_usuario = ?) AS salidas,
-        (SELECT COALESCE(SUM(p.stock * p.precio), 0) FROM productos p) AS inventario'
+         WHERE p.id_usuario = ?) AS salidas,
+        (SELECT COALESCE(SUM(p.stock * p.precio), 0) FROM productos p WHERE p.id_usuario = ?) AS inventario'
 );
 if ($consultaValores) {
-    $consultaValores->bind_param('ii', $usuarioId, $usuarioId);
+    $consultaValores->bind_param('iii', $usuarioId, $usuarioId, $usuarioId);
     $consultaValores->execute();
     $valores = $consultaValores->get_result()->fetch_assoc() ?: $valores;
 }
@@ -75,14 +72,14 @@ for ($diasAtras = 6; $diasAtras >= 0; $diasAtras--) {
 $consultaGrafico = $conexion->prepare(
     'SELECT fecha, SUM(entradas) AS entradas, SUM(salidas) AS salidas
      FROM (
-        SELECT fecha_en AS fecha, SUM(cantidad) AS entradas, 0 AS salidas
-        FROM inv_entrada
-        WHERE id_usuario = ? AND fecha_en >= ?
+        SELECT e.fecha_en AS fecha, SUM(e.cantidad) AS entradas, 0 AS salidas
+        FROM inv_entrada e INNER JOIN productos p ON p.id_producto = e.id_producto
+        WHERE p.id_usuario = ? AND e.fecha_en >= ?
         GROUP BY fecha_en
         UNION ALL
-        SELECT fecha_sa AS fecha, 0 AS entradas, SUM(cantidad) AS salidas
-        FROM inv_salida
-        WHERE id_usuario = ? AND fecha_sa >= ?
+        SELECT s.fecha_sa AS fecha, 0 AS entradas, SUM(s.cantidad) AS salidas
+        FROM inv_salida s INNER JOIN productos p ON p.id_producto = s.id_producto
+        WHERE p.id_usuario = ? AND s.fecha_sa >= ?
         GROUP BY fecha_sa
      ) AS movimientos
      GROUP BY fecha
@@ -114,24 +111,22 @@ $consultaTiendas = $conexion->prepare(
             COALESCE(e.unidades, 0) AS entradas,
             COALESCE(s.unidades, 0) AS salidas
      FROM tiendas t
-     INNER JOIN (
-        SELECT id_tienda FROM inv_entrada WHERE id_usuario = ? AND id_tienda IS NOT NULL
-        UNION
-        SELECT id_tienda FROM inv_salida WHERE id_usuario = ? AND id_tienda IS NOT NULL
-     ) AS tiendas_activas ON tiendas_activas.id_tienda = t.id_tienda
      LEFT JOIN (
-        SELECT id_tienda, SUM(cantidad) AS unidades
-        FROM inv_entrada WHERE id_usuario = ? GROUP BY id_tienda
+        SELECT e.id_tienda, SUM(e.cantidad) AS unidades
+        FROM inv_entrada e INNER JOIN productos p ON p.id_producto = e.id_producto
+        WHERE p.id_usuario = ? GROUP BY e.id_tienda
      ) AS e ON e.id_tienda = t.id_tienda
      LEFT JOIN (
-        SELECT id_tienda, SUM(cantidad) AS unidades
-        FROM inv_salida WHERE id_usuario = ? GROUP BY id_tienda
+        SELECT s.id_tienda, SUM(s.cantidad) AS unidades
+        FROM inv_salida s INNER JOIN productos p ON p.id_producto = s.id_producto
+        WHERE p.id_usuario = ? GROUP BY s.id_tienda
      ) AS s ON s.id_tienda = t.id_tienda
+     WHERE t.id_usuario = ? AND (e.id_tienda IS NOT NULL OR s.id_tienda IS NOT NULL)
      ORDER BY t.nombre_tienda
      LIMIT 6'
 );
 if ($consultaTiendas) {
-    $consultaTiendas->bind_param('iiii', $usuarioId, $usuarioId, $usuarioId, $usuarioId);
+    $consultaTiendas->bind_param('iii', $usuarioId, $usuarioId, $usuarioId);
     $consultaTiendas->execute();
     $tiendasUsuario = $consultaTiendas->get_result()->fetch_all(MYSQLI_ASSOC);
 }

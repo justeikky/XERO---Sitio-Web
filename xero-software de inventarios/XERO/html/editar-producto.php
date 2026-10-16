@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $idProducto = (int) ($_GET['id'] ?? $_POST['id_producto'] ?? 0);
@@ -20,18 +22,25 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if ($nombre === '' || $precio < 0 || $stock < 0 || $idCategoria <= 0 || $idProveedor <= 0) {
         $error = 'Completa todos los datos del producto con valores válidos.';
     } else {
-        $consulta = $conexion->prepare('UPDATE productos SET nombre_producto = ?, descripcion = ?, precio = ?, stock = ?, id_categoria = ?, id_proveedor = ? WHERE id_producto = ?');
-        $consulta->bind_param('ssdiiii', $nombre, $descripcion, $precio, $stock, $idCategoria, $idProveedor, $idProducto);
-        if ($consulta->execute()) {
-            header('Location: productos.php?actualizado=1');
-            exit;
+        $relacionesPropias = $conexion->prepare('SELECT (SELECT COUNT(*) FROM categorias WHERE id_categoria = ? AND id_usuario = ?) + (SELECT COUNT(*) FROM proveedores WHERE id_proveedor = ? AND id_usuario = ?) AS total');
+        $relacionesPropias->bind_param('iiii', $idCategoria, $usuarioId, $idProveedor, $usuarioId);
+        $relacionesPropias->execute();
+        if ((int) $relacionesPropias->get_result()->fetch_assoc()['total'] !== 2) {
+            $error = 'Selecciona una categoría y un proveedor de tu cuenta.';
+        } else {
+            $consulta = $conexion->prepare('UPDATE productos SET nombre_producto = ?, descripcion = ?, precio = ?, stock = ?, id_categoria = ?, id_proveedor = ? WHERE id_producto = ? AND id_usuario = ?');
+            $consulta->bind_param('ssdiiiii', $nombre, $descripcion, $precio, $stock, $idCategoria, $idProveedor, $idProducto, $usuarioId);
+            if ($consulta->execute()) {
+                header('Location: productos.php?actualizado=1');
+                exit;
+            }
+            $error = 'No se pudo actualizar el producto.';
         }
-        $error = 'No se pudo actualizar el producto.';
     }
 }
 
-$consultaProducto = $conexion->prepare('SELECT nombre_producto, descripcion, precio, stock, id_categoria, id_proveedor FROM productos WHERE id_producto = ?');
-$consultaProducto->bind_param('i', $idProducto);
+$consultaProducto = $conexion->prepare('SELECT nombre_producto, descripcion, precio, stock, id_categoria, id_proveedor FROM productos WHERE id_producto = ? AND id_usuario = ?');
+$consultaProducto->bind_param('ii', $idProducto, $usuarioId);
 $consultaProducto->execute();
 $producto = $consultaProducto->get_result()->fetch_assoc();
 
@@ -40,8 +49,14 @@ if (!$producto) {
     exit;
 }
 
-$categorias = $conexion->query('SELECT id_categoria, nombre_categoria FROM categorias ORDER BY nombre_categoria');
-$proveedores = $conexion->query('SELECT id_proveedor, nombre_proveedor FROM proveedores ORDER BY nombre_proveedor');
+$categorias = $conexion->prepare('SELECT id_categoria, nombre_categoria FROM categorias WHERE id_usuario = ? ORDER BY nombre_categoria');
+$categorias->bind_param('i', $usuarioId);
+$categorias->execute();
+$categorias = $categorias->get_result();
+$proveedores = $conexion->prepare('SELECT id_proveedor, nombre_proveedor FROM proveedores WHERE id_usuario = ? ORDER BY nombre_proveedor');
+$proveedores->bind_param('i', $usuarioId);
+$proveedores->execute();
+$proveedores = $proveedores->get_result();
 ?>
 <!DOCTYPE html>
 <html lang="es">

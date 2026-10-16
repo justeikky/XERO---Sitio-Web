@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $mensaje = isset($_GET['actualizada']) ? 'La categoría se actualizó correctamente.' : '';
@@ -8,8 +10,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     $idCategoria = (int) ($_POST['id_categoria'] ?? 0);
 
     if ($idCategoria > 0) {
-        $consulta = $conexion->prepare('DELETE FROM categorias WHERE id_categoria = ?');
-        $consulta->bind_param('i', $idCategoria);
+        $consulta = $conexion->prepare('DELETE FROM categorias WHERE id_categoria = ? AND id_usuario = ?');
+        $consulta->bind_param('ii', $idCategoria, $usuarioId);
         if ($consulta->execute() && $consulta->affected_rows > 0) {
             $mensaje = 'La categoría se eliminó correctamente.';
         } elseif ($consulta->errno !== 0) {
@@ -22,13 +24,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     }
 }
 
-$categorias = $conexion->query(
+$categorias = $conexion->prepare(
     'SELECT c.id_categoria, c.nombre_categoria, c.descripcion, COUNT(p.id_producto) AS total_productos
      FROM categorias c
-     LEFT JOIN productos p ON p.id_categoria = c.id_categoria
+     LEFT JOIN productos p ON p.id_categoria = c.id_categoria AND p.id_usuario = c.id_usuario
+     WHERE c.id_usuario = ?
      GROUP BY c.id_categoria, c.nombre_categoria, c.descripcion
      ORDER BY c.nombre_categoria'
 );
+$categorias->bind_param('i', $usuarioId);
+$categorias->execute();
+$categorias = $categorias->get_result();
 $imagenesCategoria = ['prod1.jpg', 'prod2.jpg', 'prod3.jpg', 'prod4.jpg'];
 ?>
 <!DOCTYPE html>

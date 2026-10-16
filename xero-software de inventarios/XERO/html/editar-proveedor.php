@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $idProveedor = (int) ($_GET['id'] ?? $_POST['id_proveedor'] ?? 0);
@@ -27,8 +29,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     } elseif ($direccion !== '' && mb_strlen($direccion) > 150) {
         $error = 'La dirección debe tener máximo 150 caracteres.';
     } else {
-        $consulta = $conexion->prepare('UPDATE proveedores SET nombre_proveedor = ?, descripcion = ?, telefono = ?, correo = ?, direccion = ? WHERE id_proveedor = ?');
-        $consulta->bind_param('sssssi', $nombre, $descripcion, $telefono, $correo, $direccion, $idProveedor);
+        $consulta = $conexion->prepare('UPDATE proveedores SET nombre_proveedor = ?, descripcion = ?, telefono = ?, correo = ?, direccion = ? WHERE id_proveedor = ? AND id_usuario = ?');
+        $consulta->bind_param('sssssii', $nombre, $descripcion, $telefono, $correo, $direccion, $idProveedor, $usuarioId);
         if ($consulta->execute()) {
             header('Location: proveedores.php?actualizado=1');
             exit;
@@ -37,8 +39,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$consultaProveedor = $conexion->prepare('SELECT nombre_proveedor, descripcion, telefono, correo, direccion FROM proveedores WHERE id_proveedor = ?');
-$consultaProveedor->bind_param('i', $idProveedor);
+$consultaProveedor = $conexion->prepare('SELECT nombre_proveedor, descripcion, telefono, correo, direccion FROM proveedores WHERE id_proveedor = ? AND id_usuario = ?');
+$consultaProveedor->bind_param('ii', $idProveedor, $usuarioId);
 $consultaProveedor->execute();
 $proveedor = $consultaProveedor->get_result()->fetch_assoc();
 

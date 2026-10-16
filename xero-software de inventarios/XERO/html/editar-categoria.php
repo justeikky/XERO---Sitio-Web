@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $idCategoria = (int) ($_GET['id'] ?? $_POST['id_categoria'] ?? 0);
@@ -18,8 +20,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     } elseif ($descripcion !== '' && mb_strlen($descripcion) > 255) {
         $error = 'La descripción debe tener máximo 255 caracteres.';
     } else {
-        $consulta = $conexion->prepare('UPDATE categorias SET nombre_categoria = ?, descripcion = ? WHERE id_categoria = ?');
-        $consulta->bind_param('ssi', $nombre, $descripcion, $idCategoria);
+        $consulta = $conexion->prepare('UPDATE categorias SET nombre_categoria = ?, descripcion = ? WHERE id_categoria = ? AND id_usuario = ?');
+        $consulta->bind_param('ssii', $nombre, $descripcion, $idCategoria, $usuarioId);
         if ($consulta->execute()) {
             header('Location: categorias.php?actualizada=1');
             exit;
@@ -28,8 +30,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$consultaCategoria = $conexion->prepare('SELECT nombre_categoria, descripcion FROM categorias WHERE id_categoria = ?');
-$consultaCategoria->bind_param('i', $idCategoria);
+$consultaCategoria = $conexion->prepare('SELECT nombre_categoria, descripcion FROM categorias WHERE id_categoria = ? AND id_usuario = ?');
+$consultaCategoria->bind_param('ii', $idCategoria, $usuarioId);
 $consultaCategoria->execute();
 $categoria = $consultaCategoria->get_result()->fetch_assoc();
 

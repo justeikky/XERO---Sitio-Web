@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 require_once __DIR__ . '/../php/actividad.php';
 
@@ -16,27 +18,32 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $cantidad = filter_input(INPUT_POST, 'cantidad', FILTER_VALIDATE_INT);
     $fecha = $_POST['fecha_movimiento'] ?? date('Y-m-d');
     $idTienda = (int) ($_POST['id_tienda'] ?? 0);
-    $idUsuario = (int) ($_POST['id_usuario'] ?? 0);
-
     if (!in_array($tipo, ['entrada', 'salida'], true)) {
         $error = 'Selecciona si el movimiento es una entrada o una salida.';
     } elseif ($cantidad === false || $cantidad === null || $cantidad <= 0) {
         $error = 'La cantidad debe ser un número entero mayor que cero.';
     } elseif (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha)) {
         $error = 'Selecciona una fecha válida.';
-    } elseif ($idTienda <= 0 || $idUsuario <= 0) {
-        $error = 'Selecciona la tienda y el usuario responsable.';
+    } elseif ($idTienda <= 0) {
+        $error = 'Selecciona una tienda de tu cuenta.';
     } else {
         try {
             $conexion->begin_transaction();
 
-            $consultaProducto = $conexion->prepare('SELECT nombre_producto, stock FROM productos WHERE id_producto = ? FOR UPDATE');
-            $consultaProducto->bind_param('i', $idProducto);
+            $consultaProducto = $conexion->prepare('SELECT nombre_producto, stock FROM productos WHERE id_producto = ? AND id_usuario = ? FOR UPDATE');
+            $consultaProducto->bind_param('ii', $idProducto, $usuarioId);
             $consultaProducto->execute();
             $producto = $consultaProducto->get_result()->fetch_assoc();
 
             if (!$producto) {
-                throw new Exception('El producto no existe.');
+                throw new Exception('El producto no existe en tu inventario.');
+            }
+
+            $consultaTienda = $conexion->prepare('SELECT id_tienda FROM tiendas WHERE id_tienda = ? AND id_usuario = ?');
+            $consultaTienda->bind_param('ii', $idTienda, $usuarioId);
+            $consultaTienda->execute();
+            if (!$consultaTienda->get_result()->fetch_assoc()) {
+                throw new Exception('La tienda seleccionada no pertenece a tu cuenta.');
             }
             if ($tipo === 'salida' && $cantidad > (int) $producto['stock']) {
                 throw new Exception('No hay stock suficiente para registrar esta salida. Stock disponible: ' . $producto['stock'] . '.');
@@ -44,19 +51,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
             if ($tipo === 'entrada') {
                 $consultaMovimiento = $conexion->prepare('INSERT INTO inv_entrada (fecha_en, cantidad, id_usuario, id_producto, id_tienda) VALUES (?, ?, ?, ?, ?)');
-                $consultaMovimiento->bind_param('siiii', $fecha, $cantidad, $idUsuario, $idProducto, $idTienda);
+                $consultaMovimiento->bind_param('siiii', $fecha, $cantidad, $usuarioId, $idProducto, $idTienda);
                 $nuevoStock = (int) $producto['stock'] + $cantidad;
             } else {
                 $consultaMovimiento = $conexion->prepare('INSERT INTO inv_salida (fecha_sa, cantidad, id_usuario, id_producto, id_tienda) VALUES (?, ?, ?, ?, ?)');
-                $consultaMovimiento->bind_param('siiii', $fecha, $cantidad, $idUsuario, $idProducto, $idTienda);
+                $consultaMovimiento->bind_param('siiii', $fecha, $cantidad, $usuarioId, $idProducto, $idTienda);
                 $nuevoStock = (int) $producto['stock'] - $cantidad;
             }
             $consultaMovimiento->execute();
 
-            $actualizarStock = $conexion->prepare('UPDATE productos SET stock = ? WHERE id_producto = ?');
-            $actualizarStock->bind_param('ii', $nuevoStock, $idProducto);
+            $actualizarStock = $conexion->prepare('UPDATE productos SET stock = ? WHERE id_producto = ? AND id_usuario = ?');
+            $actualizarStock->bind_param('iii', $nuevoStock, $idProducto, $usuarioId);
             $actualizarStock->execute();
-            registrarActividad($conexion, $tipo === 'entrada' ? 'Registró entrada' : 'Registró salida', 'Movimiento', ($tipo === 'entrada' ? 'Ingresaron ' : 'Salieron ') . $cantidad . ' unidades de "' . $producto['nombre_producto'] . '".');
+            registrarActividad($conexion, $tipo === 'entrada' ? 'Registró entrada' : 'Registró salida', 'Movimiento', ($tipo === 'entrada' ? 'Ingresaron ' : 'Salieron ') . $cantidad . ' unidades de "' . $producto['nombre_producto'] . '".', $usuarioId);
             $conexion->commit();
             header('Location: informes.php?id_producto=' . $idProducto . '&fecha_inicio=' . $fecha . '&fecha_fin=' . $fecha . '&guardado=1');
             exit;
@@ -67,26 +74,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$consultaProducto = $conexion->prepare('SELECT nombre_producto, stock FROM productos WHERE id_producto = ?');
-$consultaProducto->bind_param('i', $idProducto);
+$consultaProducto = $conexion->prepare('SELECT nombre_producto, stock FROM productos WHERE id_producto = ? AND id_usuario = ?');
+$consultaProducto->bind_param('ii', $idProducto, $usuarioId);
 $consultaProducto->execute();
 $producto = $consultaProducto->get_result()->fetch_assoc();
 if (!$producto) {
     header('Location: productos.php');
     exit;
 }
-$tiendas = $conexion->query('SELECT id_tienda, nombre_tienda FROM tiendas ORDER BY nombre_tienda');
-$usuarios = $conexion->query('SELECT id_usuario, nombre FROM usuario ORDER BY nombre');
-$usuarioCreado = false;
-if ($usuarios && $usuarios->num_rows === 0) {
-    $hashAdmin = password_hash('AdminXero2026!', PASSWORD_DEFAULT);
-    $crearUsuario = $conexion->prepare("INSERT INTO usuario (nombre, correo, telefono, contrasena, rol) VALUES ('Administrador XERO', 'admin@xero.local', '0000000000', ?, 'Administrador')");
-    $crearUsuario->bind_param('s', $hashAdmin);
-    $crearUsuario->execute();
-    $usuarioCreado = true;
-    $usuarios = $conexion->query('SELECT id_usuario, nombre FROM usuario ORDER BY nombre');
-}
-$puedeRegistrar = $tiendas && $tiendas->num_rows > 0 && $usuarios && $usuarios->num_rows > 0;
+$tiendas = $conexion->prepare('SELECT id_tienda, nombre_tienda FROM tiendas WHERE id_usuario = ? ORDER BY nombre_tienda');
+$tiendas->bind_param('i', $usuarioId);
+$tiendas->execute();
+$tiendas = $tiendas->get_result();
+$puedeRegistrar = $tiendas->num_rows > 0;
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -103,7 +103,6 @@ $puedeRegistrar = $tiendas && $tiendas->num_rows > 0 && $usuarios && $usuarios->
         <div class="form-card movement-form-card">
             <div class="movement-product-heading"><i class="fa-solid fa-box"></i><div><span>Movimiento de inventario</span><h2><?php echo htmlspecialchars($producto['nombre_producto'], ENT_QUOTES, 'UTF-8'); ?></h2><small>Stock actual: <strong><?php echo (int) $producto['stock']; ?> unidades</strong></small></div></div>
             <?php if ($error !== ''): ?><div class="form-message error"><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></div><?php endif; ?>
-            <?php if ($usuarioCreado): ?><div class="form-message success"><strong>Responsable inicial creado.</strong><span>Se usará Administrador XERO como responsable hasta que exista autenticación de usuarios.</span></div><?php endif; ?>
             <?php if (!$puedeRegistrar): ?><div class="form-message warning"><strong>Falta una tienda para registrar el movimiento.</strong><span>Crea una tienda desde <a href="agregar.php?tipo=tienda">Añadir registro</a> y vuelve a esta pantalla.</span></div><?php endif; ?>
             <form method="post" id="movimiento-form">
                 <input type="hidden" name="id_producto" value="<?php echo $idProducto; ?>">
@@ -117,7 +116,7 @@ $puedeRegistrar = $tiendas && $tiendas->num_rows > 0 && $usuarios && $usuarios->
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label for="id_tienda">Tienda <span class="required-mark">*</span></label><select id="id_tienda" name="id_tienda" required><option value="">Seleccionar tienda...</option><?php while ($tienda = $tiendas->fetch_assoc()): ?><option value="<?php echo $tienda['id_tienda']; ?>" <?php echo (int) ($_POST['id_tienda'] ?? 0) === (int) $tienda['id_tienda'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($tienda['nombre_tienda'], ENT_QUOTES, 'UTF-8'); ?></option><?php endwhile; ?></select></div>
-                    <div class="form-group"><label for="id_usuario">Responsable <span class="required-mark">*</span></label><select id="id_usuario" name="id_usuario" required><option value="">Seleccionar usuario...</option><?php while ($usuario = $usuarios->fetch_assoc()): ?><option value="<?php echo $usuario['id_usuario']; ?>" <?php echo (int) ($_POST['id_usuario'] ?? 0) === (int) $usuario['id_usuario'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($usuario['nombre'], ENT_QUOTES, 'UTF-8'); ?></option><?php endwhile; ?></select></div>
+                    <div class="form-group"><label>Responsable</label><input type="text" value="<?php echo htmlspecialchars($_SESSION['nombre_usuario'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" disabled></div>
                 </div>
                 <div class="form-buttons"><a href="productos.php" class="btn-cancel">Cancelar</a><button type="submit" class="btn-save" <?php echo $puedeRegistrar ? '' : 'disabled'; ?>><i class="fa-solid fa-floppy-disk"></i> Registrar movimiento</button></div>
             </form>

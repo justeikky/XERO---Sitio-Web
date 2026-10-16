@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 require_once __DIR__ . '/../php/actividad.php';
 
@@ -21,18 +23,21 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
             $conexion->begin_transaction();
             $tabla = $tipoEliminar === 'Entrada' ? 'inv_entrada' : 'inv_salida';
             $campoId = $tipoEliminar === 'Entrada' ? 'id_entrada' : 'id_salida';
-            $consultaMovimiento = $conexion->prepare("SELECT id_producto, cantidad FROM {$tabla} WHERE {$campoId} = ? FOR UPDATE");
-            $consultaMovimiento->bind_param('i', $idMovimiento);
+            $consultaMovimiento = $conexion->prepare("SELECT m.id_producto, m.cantidad FROM {$tabla} m INNER JOIN productos p ON p.id_producto = m.id_producto WHERE m.{$campoId} = ? AND p.id_usuario = ? FOR UPDATE");
+            $consultaMovimiento->bind_param('ii', $idMovimiento, $usuarioId);
             $consultaMovimiento->execute();
             $movimientoEliminar = $consultaMovimiento->get_result()->fetch_assoc();
             if (!$movimientoEliminar) {
                 throw new Exception('El movimiento ya no existe.');
             }
 
-            $consultaProducto = $conexion->prepare('SELECT nombre_producto, stock FROM productos WHERE id_producto = ? FOR UPDATE');
-            $consultaProducto->bind_param('i', $movimientoEliminar['id_producto']);
+            $consultaProducto = $conexion->prepare('SELECT nombre_producto, stock FROM productos WHERE id_producto = ? AND id_usuario = ? FOR UPDATE');
+            $consultaProducto->bind_param('ii', $movimientoEliminar['id_producto'], $usuarioId);
             $consultaProducto->execute();
             $productoEliminar = $consultaProducto->get_result()->fetch_assoc();
+            if (!$productoEliminar) {
+                throw new Exception('El producto del movimiento no pertenece a tu cuenta.');
+            }
             $nuevoStock = $tipoEliminar === 'Entrada'
                 ? (int) $productoEliminar['stock'] - (int) $movimientoEliminar['cantidad']
                 : (int) $productoEliminar['stock'] + (int) $movimientoEliminar['cantidad'];
@@ -40,11 +45,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
                 throw new Exception('No se puede eliminar la entrada porque dejaría el stock en negativo.');
             }
 
-            $actualizarStock = $conexion->prepare('UPDATE productos SET stock = ? WHERE id_producto = ?');
-            $actualizarStock->bind_param('ii', $nuevoStock, $movimientoEliminar['id_producto']);
+            $actualizarStock = $conexion->prepare('UPDATE productos SET stock = ? WHERE id_producto = ? AND id_usuario = ?');
+            $actualizarStock->bind_param('iii', $nuevoStock, $movimientoEliminar['id_producto'], $usuarioId);
             $actualizarStock->execute();
-            $borrarMovimiento = $conexion->prepare("DELETE FROM {$tabla} WHERE {$campoId} = ?");
-            $borrarMovimiento->bind_param('i', $idMovimiento);
+            $borrarMovimiento = $conexion->prepare("DELETE FROM {$tabla} WHERE {$campoId} = ? AND id_producto = ?");
+            $borrarMovimiento->bind_param('ii', $idMovimiento, $movimientoEliminar['id_producto']);
             $borrarMovimiento->execute();
             registrarActividad($conexion, 'Eliminó', 'Movimiento', 'Eliminó una ' . strtolower($tipoEliminar) . ' de ' . $movimientoEliminar['cantidad'] . ' unidades de "' . $productoEliminar['nombre_producto'] . '".');
             $conexion->commit();
@@ -65,15 +70,21 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     }
 }
 
-$productos = $conexion->query('SELECT id_producto, nombre_producto FROM productos ORDER BY nombre_producto');
-$tiendas = $conexion->query('SELECT id_tienda, nombre_tienda FROM tiendas ORDER BY nombre_tienda');
+$productos = $conexion->prepare('SELECT id_producto, nombre_producto FROM productos WHERE id_usuario = ? ORDER BY nombre_producto');
+$productos->bind_param('i', $usuarioId);
+$productos->execute();
+$productos = $productos->get_result();
+$tiendas = $conexion->prepare('SELECT id_tienda, nombre_tienda FROM tiendas WHERE id_usuario = ? ORDER BY nombre_tienda');
+$tiendas->bind_param('i', $usuarioId);
+$tiendas->execute();
+$tiendas = $tiendas->get_result();
 
-$condicionesEntrada = ['e.fecha_en BETWEEN ? AND ?'];
-$condicionesSalida = ['s.fecha_sa BETWEEN ? AND ?'];
-$parametrosEntrada = [$fechaInicio, $fechaFin];
-$parametrosSalida = [$fechaInicio, $fechaFin];
-$tiposEntrada = 'ss';
-$tiposSalida = 'ss';
+$condicionesEntrada = ['p.id_usuario = ?', 'e.fecha_en BETWEEN ? AND ?'];
+$condicionesSalida = ['p.id_usuario = ?', 's.fecha_sa BETWEEN ? AND ?'];
+$parametrosEntrada = [$usuarioId, $fechaInicio, $fechaFin];
+$parametrosSalida = [$usuarioId, $fechaInicio, $fechaFin];
+$tiposEntrada = 'iss';
+$tiposSalida = 'iss';
 
 if ($idProducto > 0) {
     $condicionesEntrada[] = 'e.id_producto = ?';
@@ -93,8 +104,8 @@ if ($idTienda > 0) {
     $tiposSalida .= 'i';
 }
 
-$entradaSql = 'SELECT e.id_entrada AS id_movimiento, e.fecha_en AS fecha, e.cantidad, "Entrada" AS tipo, p.nombre_producto, t.nombre_tienda, u.nombre AS usuario FROM inv_entrada e INNER JOIN productos p ON p.id_producto = e.id_producto LEFT JOIN tiendas t ON t.id_tienda = e.id_tienda LEFT JOIN usuario u ON u.id_usuario = e.id_usuario WHERE ' . implode(' AND ', $condicionesEntrada);
-$salidaSql = 'SELECT s.id_salida AS id_movimiento, s.fecha_sa AS fecha, s.cantidad, "Salida" AS tipo, p.nombre_producto, t.nombre_tienda, u.nombre AS usuario FROM inv_salida s INNER JOIN productos p ON p.id_producto = s.id_producto LEFT JOIN tiendas t ON t.id_tienda = s.id_tienda LEFT JOIN usuario u ON u.id_usuario = s.id_usuario WHERE ' . implode(' AND ', $condicionesSalida);
+$entradaSql = 'SELECT e.id_entrada AS id_movimiento, e.fecha_en AS fecha, e.cantidad, "Entrada" AS tipo, p.nombre_producto, t.nombre_tienda, u.nombre AS usuario FROM inv_entrada e INNER JOIN productos p ON p.id_producto = e.id_producto LEFT JOIN tiendas t ON t.id_tienda = e.id_tienda AND t.id_usuario = p.id_usuario LEFT JOIN usuario u ON u.id_usuario = e.id_usuario WHERE ' . implode(' AND ', $condicionesEntrada);
+$salidaSql = 'SELECT s.id_salida AS id_movimiento, s.fecha_sa AS fecha, s.cantidad, "Salida" AS tipo, p.nombre_producto, t.nombre_tienda, u.nombre AS usuario FROM inv_salida s INNER JOIN productos p ON p.id_producto = s.id_producto LEFT JOIN tiendas t ON t.id_tienda = s.id_tienda AND t.id_usuario = p.id_usuario LEFT JOIN usuario u ON u.id_usuario = s.id_usuario WHERE ' . implode(' AND ', $condicionesSalida);
 
 if ($tipoMovimiento === 'entrada') {
     $movimientosSql = $entradaSql . ' ORDER BY fecha DESC';
@@ -110,13 +121,14 @@ if ($tipoMovimiento === 'entrada') {
     $movimientosTipos = $tiposEntrada . $tiposSalida;
 }
 
-function ejecutarConsulta($conexion, $sql, $tipos, $parametros) {
+function ejecutarConsulta(mysqli $conexion, string $sql, string $tipos, array $parametros): mysqli_result {
     $consulta = $conexion->prepare($sql);
-    if (!$consulta) {
-        return false;
-    }
     if ($parametros) {
-        $consulta->bind_param($tipos, ...$parametros);
+        $argumentos = [$tipos];
+        foreach (array_keys($parametros) as $indice) {
+            $argumentos[] = &$parametros[$indice];
+        }
+        call_user_func_array([$consulta, 'bind_param'], $argumentos);
     }
     $consulta->execute();
     return $consulta->get_result();
@@ -127,18 +139,31 @@ $movimientos = ejecutarConsulta($conexion, $movimientosSql, $movimientosTipos, $
 $condicionResumenEntrada = implode(' AND ', $condicionesEntrada);
 $condicionResumenSalida = implode(' AND ', $condicionesSalida);
 $resumenSql = 'SELECT
-    (SELECT COALESCE(SUM(e.cantidad), 0) FROM inv_entrada e WHERE ' . $condicionResumenEntrada . ') AS total_entradas,
-    (SELECT COALESCE(SUM(s.cantidad), 0) FROM inv_salida s WHERE ' . $condicionResumenSalida . ') AS total_salidas';
+    (SELECT COALESCE(SUM(e.cantidad), 0) FROM inv_entrada e INNER JOIN productos p ON p.id_producto = e.id_producto WHERE ' . $condicionResumenEntrada . ') AS total_entradas,
+    (SELECT COALESCE(SUM(s.cantidad), 0) FROM inv_salida s INNER JOIN productos p ON p.id_producto = s.id_producto WHERE ' . $condicionResumenSalida . ') AS total_salidas';
 $resumen = ejecutarConsulta($conexion, $resumenSql, $tiposEntrada . $tiposSalida, array_merge($parametrosEntrada, $parametrosSalida));
-$resumenDatos = $resumen ? $resumen->fetch_assoc() : ['total_entradas' => 0, 'total_salidas' => 0];
+$resumenDatos = $resumen->fetch_assoc();
 $resumenDatos['total_movimientos'] = $movimientos ? $movimientos->num_rows : 0;
 $variacion = (int) $resumenDatos['total_entradas'] - (int) $resumenDatos['total_salidas'];
 
-$stockCondicion = '';
-$stockParametros = [$fechaInicio, $fechaFin, $fechaInicio, $fechaFin];
-$stockTipos = 'ssss';
+$stockCondicion = ' WHERE p.id_usuario = ?';
+$stockParametros = [$fechaInicio, $fechaFin];
+$stockTipos = 'ss';
+if ($idTienda > 0) {
+    $stockParametros[] = $idTienda;
+    $stockTipos .= 'i';
+}
+$stockParametros[] = $fechaInicio;
+$stockParametros[] = $fechaFin;
+$stockTipos .= 'ss';
+if ($idTienda > 0) {
+    $stockParametros[] = $idTienda;
+    $stockTipos .= 'i';
+}
+$stockParametros[] = $usuarioId;
+$stockTipos .= 'i';
 if ($idProducto > 0) {
-    $stockCondicion .= ' WHERE p.id_producto = ?';
+    $stockCondicion .= ' AND p.id_producto = ?';
     $stockParametros[] = $idProducto;
     $stockTipos .= 'i';
 }
@@ -146,15 +171,6 @@ $stockSql = 'SELECT p.nombre_producto, p.stock,
     (SELECT COALESCE(SUM(e.cantidad), 0) FROM inv_entrada e WHERE e.id_producto = p.id_producto AND e.fecha_en BETWEEN ? AND ?' . ($idTienda > 0 ? ' AND e.id_tienda = ?' : '') . ') AS entradas,
     (SELECT COALESCE(SUM(s.cantidad), 0) FROM inv_salida s WHERE s.id_producto = p.id_producto AND s.fecha_sa BETWEEN ? AND ?' . ($idTienda > 0 ? ' AND s.id_tienda = ?' : '') . ') AS salidas
     FROM productos p' . $stockCondicion . ' ORDER BY p.nombre_producto';
-if ($idTienda > 0) {
-    $stockParametros = [$fechaInicio, $fechaFin, $idTienda, $fechaInicio, $fechaFin, $idTienda];
-    $stockTipos = 'ssiss i';
-    $stockTipos = str_replace(' ', '', $stockTipos);
-    if ($idProducto > 0) {
-        $stockParametros[] = $idProducto;
-        $stockTipos .= 'i';
-    }
-}
 $stock = ejecutarConsulta($conexion, $stockSql, $stockTipos, $stockParametros);
 ?>
 <!DOCTYPE html>

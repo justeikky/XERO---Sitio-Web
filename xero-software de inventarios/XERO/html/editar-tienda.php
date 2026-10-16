@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $idTienda = (int) ($_GET['id'] ?? $_POST['id_tienda'] ?? 0);
@@ -24,8 +26,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     } elseif ($direccion !== '' && mb_strlen($direccion) > 150) {
         $error = 'La dirección debe tener máximo 150 caracteres.';
     } else {
-        $consulta = $conexion->prepare('UPDATE tiendas SET nombre_tienda = ?, descripcion = ?, telefono = ?, direccion = ? WHERE id_tienda = ?');
-        $consulta->bind_param('ssssi', $nombre, $descripcion, $telefono, $direccion, $idTienda);
+        $consulta = $conexion->prepare('UPDATE tiendas SET nombre_tienda = ?, descripcion = ?, telefono = ?, direccion = ? WHERE id_tienda = ? AND id_usuario = ?');
+        $consulta->bind_param('ssssii', $nombre, $descripcion, $telefono, $direccion, $idTienda, $usuarioId);
         if ($consulta->execute()) {
             header('Location: tiendas.php?actualizada=1');
             exit;
@@ -34,8 +36,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$consultaTienda = $conexion->prepare('SELECT nombre_tienda, descripcion, telefono, direccion FROM tiendas WHERE id_tienda = ?');
-$consultaTienda->bind_param('i', $idTienda);
+$consultaTienda = $conexion->prepare('SELECT nombre_tienda, descripcion, telefono, direccion FROM tiendas WHERE id_tienda = ? AND id_usuario = ?');
+$consultaTienda->bind_param('ii', $idTienda, $usuarioId);
 $consultaTienda->execute();
 $tienda = $consultaTienda->get_result()->fetch_assoc();
 

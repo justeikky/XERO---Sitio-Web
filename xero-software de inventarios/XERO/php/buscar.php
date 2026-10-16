@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $busqueda = trim($_GET['q'] ?? '');
@@ -7,23 +9,23 @@ $productos = $categorias = $proveedores = $tiendas = [];
 if ($busqueda !== '') {
     $patron = '%' . $busqueda . '%';
 
-    $consulta = $conexion->prepare('SELECT id_producto, nombre_producto, descripcion, precio, stock FROM productos WHERE nombre_producto LIKE ? OR descripcion LIKE ? ORDER BY nombre_producto');
-    $consulta->bind_param('ss', $patron, $patron);
+    $consulta = $conexion->prepare('SELECT id_producto, nombre_producto, descripcion, precio, stock FROM productos WHERE id_usuario = ? AND (nombre_producto LIKE ? OR descripcion LIKE ?) ORDER BY nombre_producto');
+    $consulta->bind_param('iss', $usuarioId, $patron, $patron);
     $consulta->execute();
     $productos = $consulta->get_result()->fetch_all(MYSQLI_ASSOC);
 
-    $consulta = $conexion->prepare('SELECT id_categoria, nombre_categoria, descripcion FROM categorias WHERE nombre_categoria LIKE ? OR descripcion LIKE ? ORDER BY nombre_categoria');
-    $consulta->bind_param('ss', $patron, $patron);
+    $consulta = $conexion->prepare('SELECT id_categoria, nombre_categoria, descripcion FROM categorias WHERE id_usuario = ? AND (nombre_categoria LIKE ? OR descripcion LIKE ?) ORDER BY nombre_categoria');
+    $consulta->bind_param('iss', $usuarioId, $patron, $patron);
     $consulta->execute();
     $categorias = $consulta->get_result()->fetch_all(MYSQLI_ASSOC);
 
-    $consulta = $conexion->prepare('SELECT id_proveedor, nombre_proveedor, descripcion, correo FROM proveedores WHERE nombre_proveedor LIKE ? OR descripcion LIKE ? OR correo LIKE ? ORDER BY nombre_proveedor');
-    $consulta->bind_param('sss', $patron, $patron, $patron);
+    $consulta = $conexion->prepare('SELECT id_proveedor, nombre_proveedor, descripcion, correo FROM proveedores WHERE id_usuario = ? AND (nombre_proveedor LIKE ? OR descripcion LIKE ? OR correo LIKE ?) ORDER BY nombre_proveedor');
+    $consulta->bind_param('isss', $usuarioId, $patron, $patron, $patron);
     $consulta->execute();
     $proveedores = $consulta->get_result()->fetch_all(MYSQLI_ASSOC);
 
-    $consulta = $conexion->prepare('SELECT id_tienda, nombre_tienda, descripcion, direccion FROM tiendas WHERE nombre_tienda LIKE ? OR descripcion LIKE ? OR direccion LIKE ? ORDER BY nombre_tienda');
-    $consulta->bind_param('sss', $patron, $patron, $patron);
+    $consulta = $conexion->prepare('SELECT id_tienda, nombre_tienda, descripcion, direccion FROM tiendas WHERE id_usuario = ? AND (nombre_tienda LIKE ? OR descripcion LIKE ? OR direccion LIKE ?) ORDER BY nombre_tienda');
+    $consulta->bind_param('isss', $usuarioId, $patron, $patron, $patron);
     $consulta->execute();
     $tiendas = $consulta->get_result()->fetch_all(MYSQLI_ASSOC);
 }

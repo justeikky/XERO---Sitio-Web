@@ -21,17 +21,17 @@ $placeholderBusqueda = $placeholdersBusqueda[basename($_SERVER['PHP_SELF'])] ?? 
 $rutaBuscador = basename(dirname($_SERVER['SCRIPT_FILENAME'])) === 'php' ? 'buscar.php' : '../php/buscar.php';
 $rutaHtml = basename(dirname($_SERVER['SCRIPT_FILENAME'])) === 'php' ? '../html/' : '';
 $productosStockBajo = [];
-$consultaStockBajo = $conexion->query('SELECT id_producto, nombre_producto, stock FROM productos WHERE stock <= 5 ORDER BY stock ASC, nombre_producto');
-if ($consultaStockBajo) {
-    $productosStockBajo = $consultaStockBajo->fetch_all(MYSQLI_ASSOC);
-}
+$usuarioId = usuarioAutenticadoId();
+$consultaStockBajo = $conexion->prepare('SELECT id_producto, nombre_producto, stock FROM productos WHERE id_usuario = ? AND stock <= 5 ORDER BY stock ASC, nombre_producto');
+$consultaStockBajo->bind_param('i', $usuarioId);
+$consultaStockBajo->execute();
+$productosStockBajo = $consultaStockBajo->get_result()->fetch_all(MYSQLI_ASSOC);
 $actividadesRecientes = [];
-$consultaActividad = $conexion->query('SELECT accion, entidad, descripcion, creado_en FROM actividad ORDER BY creado_en DESC, id_actividad DESC LIMIT 8');
-if ($consultaActividad) {
-    $actividadesRecientes = $consultaActividad->fetch_all(MYSQLI_ASSOC);
-}
+$consultaActividad = $conexion->prepare('SELECT accion, entidad, descripcion, creado_en FROM actividad WHERE id_usuario = ? ORDER BY creado_en DESC, id_actividad DESC LIMIT 8');
+$consultaActividad->bind_param('i', $usuarioId);
+$consultaActividad->execute();
+$actividadesRecientes = $consultaActividad->get_result()->fetch_all(MYSQLI_ASSOC);
 $avatarUrl = '../img/logo-xero.png';
-$usuarioId = isset($_SESSION['id_usuario']) ? (int) $_SESSION['id_usuario'] : 0;
 if ($usuarioId > 0) {
     $avatarConsulta = $conexion->prepare('SELECT avatar FROM usuario WHERE id_usuario = ?');
     if ($avatarConsulta) {

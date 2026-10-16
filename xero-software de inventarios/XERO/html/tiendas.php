@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
 require_once __DIR__ . '/../php/conexion.php';
 
 $mensaje = isset($_GET['actualizada']) ? 'La tienda se actualizó correctamente.' : '';
@@ -8,16 +10,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     $idTienda = (int) ($_POST['id_tienda'] ?? 0);
 
     if ($idTienda > 0) {
-        $consultaMovimientos = $conexion->prepare('SELECT (SELECT COUNT(*) FROM inv_entrada WHERE id_tienda = ?) + (SELECT COUNT(*) FROM inv_salida WHERE id_tienda = ?) AS total');
-        $consultaMovimientos->bind_param('ii', $idTienda, $idTienda);
+        $consultaMovimientos = $conexion->prepare('SELECT (SELECT COUNT(*) FROM inv_entrada WHERE id_tienda = ? AND id_producto IN (SELECT id_producto FROM productos WHERE id_usuario = ?)) + (SELECT COUNT(*) FROM inv_salida WHERE id_tienda = ? AND id_producto IN (SELECT id_producto FROM productos WHERE id_usuario = ?)) AS total');
+        $consultaMovimientos->bind_param('iiii', $idTienda, $usuarioId, $idTienda, $usuarioId);
         $consultaMovimientos->execute();
         $totalMovimientos = (int) $consultaMovimientos->get_result()->fetch_assoc()['total'];
 
         if ($totalMovimientos > 0) {
             $error = 'No se puede eliminar esta tienda porque tiene movimientos relacionados.';
         } else {
-            $consulta = $conexion->prepare('DELETE FROM tiendas WHERE id_tienda = ?');
-            $consulta->bind_param('i', $idTienda);
+            $consulta = $conexion->prepare('DELETE FROM tiendas WHERE id_tienda = ? AND id_usuario = ?');
+            $consulta->bind_param('ii', $idTienda, $usuarioId);
             if ($consulta->execute() && $consulta->affected_rows > 0) {
                 $mensaje = 'La tienda se eliminó correctamente.';
             } else {
@@ -29,15 +31,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '')
     }
 }
 
-$tiendas = $conexion->query(
+$tiendas = $conexion->prepare(
     'SELECT t.id_tienda, t.nombre_tienda, t.descripcion, t.telefono, t.direccion,
-            (SELECT COUNT(*) FROM inv_entrada e WHERE e.id_tienda = t.id_tienda) AS total_entradas,
-            (SELECT COUNT(*) FROM inv_salida s WHERE s.id_tienda = t.id_tienda) AS total_salidas,
-            (SELECT COALESCE(SUM(e.cantidad), 0) FROM inv_entrada e WHERE e.id_tienda = t.id_tienda) AS unidades_entradas,
-            (SELECT COALESCE(SUM(s.cantidad), 0) FROM inv_salida s WHERE s.id_tienda = t.id_tienda) AS unidades_salidas
+            (SELECT COUNT(*) FROM inv_entrada e WHERE e.id_tienda = t.id_tienda AND e.id_producto IN (SELECT id_producto FROM productos WHERE id_usuario = t.id_usuario)) AS total_entradas,
+            (SELECT COUNT(*) FROM inv_salida s WHERE s.id_tienda = t.id_tienda AND s.id_producto IN (SELECT id_producto FROM productos WHERE id_usuario = t.id_usuario)) AS total_salidas,
+            (SELECT COALESCE(SUM(e.cantidad), 0) FROM inv_entrada e WHERE e.id_tienda = t.id_tienda AND e.id_producto IN (SELECT id_producto FROM productos WHERE id_usuario = t.id_usuario)) AS unidades_entradas,
+            (SELECT COALESCE(SUM(s.cantidad), 0) FROM inv_salida s WHERE s.id_tienda = t.id_tienda AND s.id_producto IN (SELECT id_producto FROM productos WHERE id_usuario = t.id_usuario)) AS unidades_salidas
      FROM tiendas t
+     WHERE t.id_usuario = ?
      ORDER BY t.nombre_tienda'
 );
+$tiendas->bind_param('i', $usuarioId);
+$tiendas->execute();
+$tiendas = $tiendas->get_result();
 ?>
 <!DOCTYPE html>
 <html lang="es">

@@ -2,6 +2,21 @@
 if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
 }
+require_once __DIR__ . '/../php/autenticacion.php';
+$usuarioId = usuarioAutenticadoId();
+require_once __DIR__ . '/../php/conexion.php';
+require_once __DIR__ . '/../php/actividad.php';
+
+$usuarioConsulta = $conexion->prepare('SELECT nombre, correo, telefono, rol, avatar FROM usuario WHERE id_usuario = ?');
+$usuarioConsulta->bind_param('i', $usuarioId);
+$usuarioConsulta->execute();
+$usuario = $usuarioConsulta->get_result()->fetch_assoc();
+if (!$usuario) {
+    unset($_SESSION['id_usuario'], $_SESSION['nombre_usuario'], $_SESSION['correo_usuario'], $_SESSION['rol_usuario']);
+    session_regenerate_id(true);
+    header('Location: sesion.php?sesion_expirada=1');
+    exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -16,27 +31,8 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 <body>
 
     <?php
-    require_once __DIR__ . '/../php/conexion.php';
-    require_once __DIR__ . '/../php/actividad.php';
-
     $mensaje = '';
     $error = '';
-    $usuarioId = isset($_SESSION['id_usuario']) ? (int) $_SESSION['id_usuario'] : 0;
-    if ($usuarioId <= 0) {
-        header('Location: sesion.php?sesion_expirada=1');
-        exit;
-    }
-    $usuarioConsulta = $conexion->prepare('SELECT nombre, correo, telefono, rol, avatar FROM usuario WHERE id_usuario = ?');
-    $usuarioConsulta->bind_param('i', $usuarioId);
-    $usuarioConsulta->execute();
-    $usuario = $usuarioConsulta->get_result()->fetch_assoc();
-
-    if (!$usuario) {
-        unset($_SESSION['id_usuario'], $_SESSION['nombre_usuario'], $_SESSION['correo_usuario'], $_SESSION['rol_usuario']);
-        session_regenerate_id(true);
-        header('Location: sesion.php?sesion_expirada=1');
-        exit;
-    }
 
     $preferenciasConsulta = $conexion->prepare('SELECT idioma, moneda, notificaciones_inventario, alertas_correo FROM configuracion_usuario WHERE id_usuario = ?');
     $preferenciasConsulta->bind_param('i', $usuarioId);
@@ -98,7 +94,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
             $error = 'No se pudieron guardar las preferencias.';
         }
     } elseif (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['accion'] ?? '') === 'eliminar_cuenta') {
-        $movimientosConsulta = $conexion->prepare('SELECT (SELECT COUNT(*) FROM inv_entrada WHERE id_usuario = ?) + (SELECT COUNT(*) FROM inv_salida WHERE id_usuario = ?) AS total');
+        $movimientosConsulta = $conexion->prepare('SELECT (SELECT COUNT(*) FROM inv_entrada e INNER JOIN productos p ON p.id_producto = e.id_producto WHERE p.id_usuario = ?) + (SELECT COUNT(*) FROM inv_salida s INNER JOIN productos p ON p.id_producto = s.id_producto WHERE p.id_usuario = ?) AS total');
         $movimientosConsulta->bind_param('ii', $usuarioId, $usuarioId);
         $movimientosConsulta->execute();
         $totalMovimientos = (int) $movimientosConsulta->get_result()->fetch_assoc()['total'];
@@ -108,6 +104,11 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
         } else {
             $rutaAvatar = !empty($usuario['avatar']) ? __DIR__ . '/../' . $usuario['avatar'] : '';
             $conexion->begin_transaction();
+            foreach (['productos', 'categorias', 'proveedores', 'tiendas', 'actividad', 'configuracion_usuario'] as $tablaUsuario) {
+                $eliminarDatos = $conexion->prepare("DELETE FROM {$tablaUsuario} WHERE id_usuario = ?");
+                $eliminarDatos->bind_param('i', $usuarioId);
+                $eliminarDatos->execute();
+            }
             $eliminarCuenta = $conexion->prepare('DELETE FROM usuario WHERE id_usuario = ?');
             $eliminarCuenta->bind_param('i', $usuarioId);
             if (!$eliminarCuenta->execute() || $eliminarCuenta->affected_rows === 0) {
@@ -118,6 +119,8 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
                 if ($rutaAvatar !== '' && is_file($rutaAvatar)) {
                     @unlink($rutaAvatar);
                 }
+                $_SESSION = [];
+                session_destroy();
                 header('Location: sesion.php?cuenta_eliminada=1');
                 exit;
             }
